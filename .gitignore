@@ -1,0 +1,7 @@
+node_modules/
+.env
+morbise.db
+morbise.db-shm
+morbise.db-wal
+*.log
+dist/
