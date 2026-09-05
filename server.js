@@ -77,6 +77,16 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '4mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ── Join page — serves join.html for any /join/:code URL
+// The code is read by join.html from the URL path via JS
+app.get('/join/:code', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'join.html'));
+});
+
+app.get('/join', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'join.html'));
+});
+
 // ── Health check
 app.get('/health', (req, res) => {
   res.json({ ok: true, version: '1.0.0', sessions: sessions.size });
