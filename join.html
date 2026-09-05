@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#07111f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Morbise — Join Quiz</title>
+<style>
+/* ═══════════════ TOKENS ═══════════════ */
+:root{
+  --bg:#07111f; --panel:#0c192b; --panel2:#101f34; --panel3:#16273e;
+  --line:#1e3048; --line2:#2b3f58;
+  --text:#f0f4fb; --muted:#7a8fa8;
+  --accent:#e5b84b; --blue:#4ca6ff; --good:#36c78a; --bad:#e85b68;
+  --r:14px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;background:var(--bg);color:var(--text);
+  font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;
+  -webkit-tap-highlight-color:transparent;}
+button,input,select{font:inherit;color:inherit;}
+
+/* ═══════════════ LAYOUT ═══════════════ */
+.screen{display:none;flex-direction:column;align-items:center;
+  justify-content:flex-start;min-height:100vh;padding:24px 18px 40px;}
+.screen.active{display:flex;}
+
+/* ═══════════════ BRAND ═══════════════ */
+.brand{font-size:28px;font-weight:950;font-style:italic;
+  letter-spacing:3px;color:var(--accent);
+  text-shadow:0 2px 16px rgba(229,184,75,.3);margin-bottom:6px;}
+.brand-sub{font-size:12px;font-weight:700;letter-spacing:.14em;
+  color:var(--muted);text-transform:uppercase;margin-bottom:28px;}
+
+/* ═══════════════ CARD ═══════════════ */
+.card{background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r);padding:22px;width:100%;max-width:420px;margin-bottom:14px;}
+.card h2{font-size:18px;font-weight:800;margin-bottom:16px;}
+.card h3{font-size:13px;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;}
+
+/* ═══════════════ FORM ═══════════════ */
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12px;font-weight:700;
+  color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;}
+.field input,.field select{
+  width:100%;background:#060f1c;border:1.5px solid var(--line2);
+  border-radius:9px;padding:13px 14px;font-size:16px;color:var(--text);
+  transition:border-color .15s;}
+.field input:focus,.field select:focus{outline:none;border-color:var(--blue);}
+
+/* ═══════════════ BUTTONS ═══════════════ */
+.btn{width:100%;padding:15px;border-radius:11px;font-size:17px;
+  font-weight:800;border:none;cursor:pointer;transition:opacity .15s,transform .1s;}
+.btn:active{transform:scale(.97);}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-accent{background:var(--accent);color:#111;}
+.btn-good{background:#123b2b;color:var(--good);border:1.5px solid var(--good);}
+.btn-ghost{background:transparent;color:var(--muted);
+  border:1.5px solid var(--line2);font-size:14px;padding:11px;}
+
+/* ═══════════════ CODE INPUT ═══════════════ */
+.code-input{
+  font-size:32px;font-weight:950;letter-spacing:10px;
+  text-align:center;font-family:monospace;text-transform:uppercase;
+  padding:16px;background:#060f1c;border:2px solid var(--accent);
+  border-radius:11px;width:100%;color:var(--accent);}
+.code-input::placeholder{color:rgba(229,184,75,.3);letter-spacing:4px;}
+
+/* ═══════════════ QUIZ INFO BANNER ═══════════════ */
+.quiz-banner{background:var(--panel2);border:1px solid var(--accent);
+  border-radius:var(--r);padding:16px;width:100%;max-width:420px;
+  margin-bottom:14px;text-align:center;}
+.quiz-banner .qt{font-size:19px;font-weight:900;color:var(--accent);margin-bottom:4px;}
+.quiz-banner .qs{font-size:13px;color:var(--muted);}
+
+/* ═══════════════ WAITING ROOM ═══════════════ */
+.pulse{width:14px;height:14px;border-radius:50%;background:var(--good);
+  display:inline-block;margin-right:8px;
+  animation:pulse 1.4s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.75);}}
+.participant-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px;}
+.chip{padding:6px 12px;border-radius:999px;font-size:13px;font-weight:700;
+  background:var(--panel3);border:1px solid var(--line2);color:var(--text);}
+
+/* ═══════════════ QUESTION SCREEN ═══════════════ */
+.round-tag{font-size:12px;font-weight:800;color:var(--blue);
+  text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;}
+.q-num{font-size:12px;color:var(--muted);margin-bottom:10px;}
+.q-text{font-size:20px;font-weight:900;line-height:1.35;
+  margin-bottom:22px;min-height:60px;}
+.options-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}
+.opt-btn{
+  padding:16px 10px;border-radius:11px;font-size:15px;font-weight:800;
+  border:2px solid var(--line2);background:var(--panel2);
+  cursor:pointer;text-align:left;line-height:1.3;
+  transition:border-color .15s,background .15s,transform .1s;}
+.opt-btn:active{transform:scale(.96);}
+.opt-btn .opt-letter{display:block;font-size:11px;font-weight:900;
+  color:var(--accent);margin-bottom:4px;letter-spacing:.06em;}
+.opt-btn.selected{border-color:var(--accent);background:var(--panel3);}
+.opt-btn.correct{border-color:var(--good);background:#123b2b;color:var(--good);}
+.opt-btn.wrong{border-color:var(--bad);background:#401d24;color:var(--bad);}
+.opt-btn.disabled-opt{opacity:.5;cursor:not-allowed;}
+.opt-btn.locked{cursor:not-allowed;}
+
+/* ═══════════════ TIMER BAR ═══════════════ */
+.timer-wrap{width:100%;max-width:420px;margin-bottom:16px;}
+.timer-bar-bg{height:7px;background:var(--panel2);border-radius:999px;overflow:hidden;}
+.timer-bar-fill{height:100%;background:var(--accent);
+  border-radius:999px;transition:width .9s linear,background .3s;}
+.timer-bar-fill.urgent{background:var(--bad);}
+.timer-val{font-size:13px;font-weight:700;color:var(--muted);
+  text-align:right;margin-top:4px;}
+
+/* ═══════════════ SCORE BADGE ═══════════════ */
+.score-strip{display:flex;justify-content:space-between;align-items:center;
+  padding:10px 14px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:10px;margin-bottom:14px;width:100%;max-width:420px;}
+.score-strip .sc-label{font-size:12px;color:var(--muted);font-weight:700;}
+.score-strip .sc-val{font-size:22px;font-weight:950;color:var(--accent);}
+.score-strip .sc-pos{font-size:13px;color:var(--blue);font-weight:800;}
+
+/* ═══════════════ ANSWER REVEAL ═══════════════ */
+.reveal-notice{padding:14px;border-radius:10px;font-size:16px;
+  font-weight:800;text-align:center;margin-bottom:14px;width:100%;max-width:420px;}
+.reveal-correct{background:#123b2b;border:1.5px solid var(--good);color:var(--good);}
+.reveal-wrong{background:#401d24;border:1.5px solid var(--bad);color:var(--bad);}
+.reveal-none{background:var(--panel2);border:1.5px solid var(--line2);color:var(--muted);}
+
+/* ═══════════════ LEADERBOARD ═══════════════ */
+.lb-list{display:grid;gap:7px;width:100%;max-width:420px;}
+.lb-row{display:grid;grid-template-columns:40px 1fr auto;
+  align-items:center;gap:10px;padding:11px 14px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+.lb-row.me{border-color:var(--accent);background:var(--panel3);}
+.lb-pos{font-size:18px;font-weight:950;color:var(--muted);text-align:center;}
+.lb-name{font-weight:700;font-size:15px;}
+.lb-team{font-size:11px;color:var(--muted);}
+.lb-score{font-size:18px;font-weight:950;color:var(--accent);}
+
+/* ═══════════════ FINISHED ═══════════════ */
+.trophy{font-size:64px;text-align:center;margin:20px 0 10px;}
+.final-pos{font-size:48px;font-weight:950;color:var(--accent);text-align:center;}
+.final-score{font-size:20px;color:var(--muted);text-align:center;margin-bottom:24px;}
+
+/* ═══════════════ TOAST ═══════════════ */
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  background:#1e3a5c;color:var(--text);padding:12px 22px;border-radius:10px;
+  font-weight:700;font-size:14px;z-index:9999;opacity:0;pointer-events:none;
+  transition:opacity .3s;white-space:nowrap;}
+
+/* ═══════════════ FOOTER ═══════════════ */
+.morbise-footer{position:fixed;bottom:0;left:0;right:0;
+  background:rgba(8,15,30,.92);border-top:1px solid rgba(229,184,75,.2);
+  padding:5px 16px;display:flex;align-items:center;justify-content:center;gap:7px;
+  font-size:11px;z-index:100;}
+.morbise-footer .fw{font-weight:700;letter-spacing:.1em;color:rgba(229,184,75,.6);}
+.morbise-footer .fm{font-weight:950;font-style:italic;letter-spacing:.15em;color:rgba(229,184,75,.85);}
+
+/* ═══════════════ HIDDEN SCREEN HELPER ═══════════════ */
+.hidden{display:none!important;}
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════
+     SCREEN 1: ENTER CODE
+════════════════════════════════════════ -->
+<div class="screen active" id="s-code">
+  <div class="brand">MORBISE</div>
+  <div class="brand-sub">Quiz Engine</div>
+  <div class="card">
+    <h2>Join a Quiz</h2>
+    <div class="field">
+      <label>Session Code</label>
+      <input class="code-input" id="inp-code" maxlength="6" placeholder="XXXXXX"
+        autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+    </div>
+    <button class="btn btn-accent" id="btn-check-code">Find Quiz →</button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     SCREEN 2: QUIZ FOUND — ENTER NAME
+════════════════════════════════════════ -->
+<div class="screen" id="s-join">
+  <div class="brand">MORBISE</div>
+  <div class="brand-sub">Quiz Engine</div>
+  <div class="quiz-banner" id="join-banner">
+    <div class="qt" id="join-quiz-title">Quiz Title</div>
+    <div class="qs" id="join-quiz-meta">Loading…</div>
+  </div>
+  <div class="card">
+    <h2>Enter Your Details</h2>
+    <div class="field">
+      <label>Your Name / Team Name</label>
+      <input id="inp-name" placeholder="e.g. Team Alpha" maxlength="40">
+    </div>
+    <div class="field" id="team-field">
+      <label>School / Organisation <span style="color:var(--muted);font-weight:400;">(optional)</span></label>
+      <input id="inp-team" placeholder="e.g. Hilltop College" maxlength="60">
+    </div>
+    <button class="btn btn-accent" id="btn-join" style="margin-bottom:10px;">Join Quiz →</button>
+    <button class="btn btn-ghost" id="btn-back-code">← Change Code</button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     SCREEN 3: WAITING ROOM
+════════════════════════════════════════ -->
+<div class="screen" id="s-waiting">
+  <div class="brand">MORBISE</div>
+  <div class="brand-sub">Quiz Engine</div>
+  <div class="quiz-banner">
+    <div class="qt" id="wait-title">Waiting…</div>
+    <div class="qs" id="wait-meta"></div>
+  </div>
+  <div class="card">
+    <h3><span class="pulse"></span> Waiting for host to start</h3>
+    <p style="color:var(--muted);font-size:14px;margin-bottom:12px;">
+      The quiz will begin once the host starts it. Stay on this page.
+    </p>
+    <div id="wait-name-display" style="font-size:20px;font-weight:900;color:var(--accent);margin-bottom:6px;"></div>
+    <div id="wait-team-display" style="font-size:13px;color:var(--muted);"></div>
+    <h3 style="margin-top:16px;">Participants joined</h3>
+    <div id="participant-chips" class="participant-chips"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     SCREEN 4: LIVE QUESTION
+════════════════════════════════════════ -->
+<div class="screen" id="s-question">
+  <div class="score-strip">
+    <div><div class="sc-label">My Score</div><div class="sc-val" id="my-score">0</div></div>
+    <div style="text-align:right;"><div class="sc-label">Position</div><div class="sc-pos" id="my-pos">—</div></div>
+  </div>
+  <div class="timer-wrap">
+    <div class="timer-bar-bg"><div class="timer-bar-fill" id="timer-bar" style="width:100%;"></div></div>
+    <div class="timer-val" id="timer-val">—</div>
+  </div>
+  <div class="card" style="max-width:420px;width:100%;">
+    <div class="round-tag" id="q-round-tag">Round 1</div>
+    <div class="q-num" id="q-num-tag">Question 1 of 10</div>
+    <div class="q-text" id="q-text">Waiting for question…</div>
+    <div class="options-grid" id="options-grid"></div>
+    <div id="answer-status" style="font-size:13px;color:var(--muted);text-align:center;min-height:20px;"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     SCREEN 5: ANSWER REVEALED
+════════════════════════════════════════ -->
+<div class="screen" id="s-reveal">
+  <div class="score-strip">
+    <div><div class="sc-label">My Score</div><div class="sc-val" id="rev-score">0</div></div>
+    <div style="text-align:right;"><div class="sc-label">Position</div><div class="sc-pos" id="rev-pos">—</div></div>
+  </div>
+  <div id="reveal-notice" class="reveal-notice reveal-none">—</div>
+  <div class="card" style="max-width:420px;width:100%;">
+    <h3>Top 5</h3>
+    <div id="rev-leaderboard" class="lb-list"></div>
+  </div>
+  <div class="card" style="max-width:420px;width:100%;margin-top:0;">
+    <p style="color:var(--muted);font-size:13px;text-align:center;">
+      Wait for the host to move to the next question.
+    </p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     SCREEN 6: QUIZ FINISHED
+════════════════════════════════════════ -->
+<div class="screen" id="s-finished">
+  <div class="brand" style="margin-top:24px;">MORBISE</div>
+  <div class="trophy" id="finish-trophy">🏆</div>
+  <div class="final-pos" id="finish-pos">1st</div>
+  <div class="final-score" id="finish-score">0 points</div>
+  <div class="card" style="max-width:420px;width:100%;margin-bottom:0;">
+    <h2>Final Leaderboard</h2>
+    <div id="finish-leaderboard" class="lb-list"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<!-- FOOTER -->
+<div class="morbise-footer">
+  <span class="fw">Powered by</span>
+  <span class="fm">MORBISE</span>
+</div>
+
+<script>
+'use strict';
+
+/* ══════════════════════════════════════════
+   CONFIG — set BASE_URL to your server
+══════════════════════════════════════════ */
+// Auto-detect: if this page is served FROM the Morbise server, use same origin.
+// If hosted separately, set BASE_URL explicitly.
+const BASE_URL = (() => {
+  const origin = window.location.origin;
+  // If we're on the server's own domain, use it directly
+  if (!origin.includes('file://')) return origin;
+  // Fallback for local dev
+  return 'http://localhost:3000';
+})();
+
+/* ══════════════════════════════════════════
+   STATE
+══════════════════════════════════════════ */
+let state = {
+  code:          '',
+  participantId: null,
+  name:          '',
+  team:          '',
+  deviceId:      getOrCreateDeviceId(),
+  ws:            null,
+  wsReady:       false,
+  timerMax:      30,
+  myAnswer:      null,   // optionIndex
+  myScore:       0,
+  quizData:      null,
+  currentRound:  0,
+  currentQ:      0,
+  status:        'waiting',
+};
+
+/* ══════════════════════════════════════════
+   DEVICE ID (persist so reconnect works)
+══════════════════════════════════════════ */
+function getOrCreateDeviceId() {
+  let id = localStorage.getItem('mqe_device_id');
+  if (!id) { id = 'dev_' + Math.random().toString(36).slice(2,12); localStorage.setItem('mqe_device_id', id); }
+  return id;
+}
+
+/* ══════════════════════════════════════════
+   SCREEN NAVIGATION
+══════════════════════════════════════════ */
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  const el = document.getElementById(id);
+  if (el) el.classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+/* ══════════════════════════════════════════
+   TOAST
+══════════════════════════════════════════ */
+let _toastTid;
+function toast(msg, dur = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.style.opacity = '1';
+  clearTimeout(_toastTid);
+  _toastTid = setTimeout(() => { el.style.opacity = '0'; }, dur);
+}
+
+/* ══════════════════════════════════════════
+   SCREEN 1: ENTER CODE
+══════════════════════════════════════════ */
+// Pre-fill code from URL path /join/ABC123
+const urlCode = window.location.pathname.split('/join/')[1]?.trim().toUpperCase() || '';
+if (urlCode.length === 6) {
+  document.getElementById('inp-code').value = urlCode;
+  // Auto-check after page loads
+  window.addEventListener('load', () => setTimeout(checkCode, 400));
+}
+
+document.getElementById('btn-check-code').onclick = checkCode;
+document.getElementById('inp-code').addEventListener('keydown', e => { if (e.key === 'Enter') checkCode(); });
+document.getElementById('inp-code').addEventListener('input', e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+});
+
+async function checkCode() {
+  const code = document.getElementById('inp-code').value.trim().toUpperCase();
+  if (code.length !== 6) return toast('Enter the 6-character session code.');
+  const btn = document.getElementById('btn-check-code');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const res = await fetch(`${BASE_URL}/api/session/${code}`);
+    if (!res.ok) throw new Error('Session not found. Check the code and try again.');
+    const data = await res.json();
+    state.code     = code;
+    state.quizData = data;
+    document.getElementById('join-quiz-title').textContent = data.quizTitle || 'Morbise Quiz';
+    document.getElementById('join-quiz-meta').textContent  =
+      `${data.rounds?.length || 0} round(s) · ${data.participants || 0} participant(s) joined`;
+    showScreen('s-join');
+    document.getElementById('inp-name').focus();
+  } catch (e) {
+    toast(e.message || 'Could not find session.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Find Quiz →';
+  }
+}
+
+/* ══════════════════════════════════════════
+   SCREEN 2: JOIN FORM
+══════════════════════════════════════════ */
+document.getElementById('btn-back-code').onclick = () => showScreen('s-code');
+document.getElementById('btn-join').onclick = joinQuiz;
+document.getElementById('inp-name').addEventListener('keydown', e => { if (e.key === 'Enter') joinQuiz(); });
+
+async function joinQuiz() {
+  const name = document.getElementById('inp-name').value.trim();
+  const team = document.getElementById('inp-team').value.trim();
+  if (!name) return toast('Enter your name or team name.');
+  const btn = document.getElementById('btn-join');
+  btn.disabled = true; btn.textContent = 'Joining…';
+  try {
+    const res = await fetch(`${BASE_URL}/api/session/${state.code}/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, team, deviceId: state.deviceId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Could not join session.');
+    }
+    const data = await res.json();
+    state.participantId = data.participantId;
+    state.name = name; state.team = team;
+    state.currentRound = data.currentRound || 0;
+    state.currentQ     = data.currentQ || 0;
+    state.status       = data.status || 'waiting';
+
+    // Save for reconnect
+    localStorage.setItem('mqe_pid',  state.participantId);
+    localStorage.setItem('mqe_code', state.code);
+    localStorage.setItem('mqe_name', state.name);
+
+    // Go to waiting room
+    document.getElementById('wait-title').textContent = data.quizTitle || 'Morbise Quiz';
+    document.getElementById('wait-meta').textContent  = state.code;
+    document.getElementById('wait-name-display').textContent = name;
+    document.getElementById('wait-team-display').textContent = team || '';
+    showScreen('s-waiting');
+
+    // Connect WebSocket
+    connectWS();
+
+  } catch (e) {
+    toast(e.message || 'Join failed.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Join Quiz →';
+  }
+}
+
+/* ══════════════════════════════════════════
+   WEBSOCKET
+══════════════════════════════════════════ */
+let wsRetries = 0;
+
+function connectWS() {
+  const wsBase = BASE_URL.replace(/^http/, 'ws');
+  const url = `${wsBase}/live?code=${state.code}&role=participant&participantId=${state.participantId}`;
+  const ws = new WebSocket(url);
+  state.ws = ws;
+
+  ws.onopen = () => {
+    wsRetries = 0;
+    state.wsReady = true;
+    console.log('[WS] connected');
+  };
+
+  ws.onmessage = e => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    handleServerMessage(msg);
+  };
+
+  ws.onclose = () => {
+    state.wsReady = false;
+    if (wsRetries < 8) {
+      const delay = Math.min(1000 * Math.pow(1.5, wsRetries), 12000);
+      wsRetries++;
+      console.log(`[WS] reconnecting in ${delay}ms…`);
+      setTimeout(connectWS, delay);
+    } else {
+      toast('Connection lost. Please refresh the page.');
+    }
+  };
+
+  ws.onerror = () => { ws.close(); };
+}
+
+/* ══════════════════════════════════════════
+   SERVER MESSAGE HANDLER
+══════════════════════════════════════════ */
+function handleServerMessage(msg) {
+  switch (msg.type) {
+
+    case 'init':
+      updateParticipantChips(msg.participants || []);
+      if (msg.state) applyQuizState(msg.state);
+      break;
+
+    case 'quizState':
+      applyQuizState(msg);
+      break;
+
+    case 'participantJoined':
+    case 'participantList':
+      updateParticipantChips(msg.participants || []);
+      break;
+
+    case 'participantStatus':
+      // Someone connected/disconnected — refresh chips
+      break;
+
+    case 'answerConfirmed':
+      state.myAnswer = msg.optionIndex;
+      renderAnswerConfirmed(msg.optionIndex);
+      break;
+
+    case 'sessionEnded':
+      state.status = 'finished';
+      showFinished(msg.leaderboard || []);
+      break;
+  }
+}
+
+/* ══════════════════════════════════════════
+   APPLY QUIZ STATE (from server)
+══════════════════════════════════════════ */
+let _timerAnimFrame = null;
+let _timerStart = null;
+let _timerFrom  = 30;
+let _timerMax   = 30;
+
+function applyQuizState(s) {
+  state.status       = s.status;
+  state.currentRound = s.currentRound;
+  state.currentQ     = s.currentQ;
+  state.myScore      = s.myScore || state.myScore;
+  if (s.myAnswer !== null && s.myAnswer !== undefined) state.myAnswer = s.myAnswer;
+
+  // Route to correct screen based on status + reveal state
+  if (s.status === 'finished') { showFinished(s.leaderboard || []); return; }
+  if (s.status === 'waiting')  { showScreen('s-waiting'); return; }
+
+  // Active quiz
+  if (s.answerRevealed) {
+    showRevealScreen(s);
+  } else {
+    showQuestionScreen(s);
+  }
+}
+
+/* ══════════════════════════════════════════
+   QUESTION SCREEN
+══════════════════════════════════════════ */
+function showQuestionScreen(s) {
+  showScreen('s-question');
+  document.getElementById('q-round-tag').textContent = s.roundName || `Round ${s.currentRound + 1}`;
+  document.getElementById('q-num-tag').textContent   = `Question ${s.currentQ + 1} of ${s.totalQuestions || '?'}`;
+  document.getElementById('q-text').textContent      = s.question || (s.revealedQuestion === false ? 'Question incoming…' : '');
+  document.getElementById('my-score').textContent    = s.myScore || state.myScore || 0;
+  document.getElementById('my-pos').textContent      = getMyPos(s.leaderboard);
+
+  // Timer bar
+  updateTimerBar(s.timerValue, s.timerRunning);
+
+  // Options
+  renderOptions(s.options || [], s.optionsRevealed, false, null, s.myAnswer);
+  renderAnswerStatus(s);
+}
+
+function renderOptions(options, revealed, answered, correctAnswer, myAnswer) {
+  const grid = document.getElementById('options-grid');
+  const letters = ['A','B','C','D'];
+
+  if (!options || options.length === 0) {
+    grid.innerHTML = `<div style="grid-column:1/-1;color:var(--muted);font-size:14px;text-align:center;padding:20px;">
+      Options will appear shortly…</div>`;
+    return;
+  }
+
+  grid.innerHTML = options.map((opt, i) => {
+    let cls = 'opt-btn';
+    if (myAnswer === i)       cls += ' selected';
+    if (answered && correctAnswer !== null) {
+      if (i === correctAnswer) cls += ' correct';
+      else if (myAnswer === i) cls += ' wrong';
+    }
+    const isLocked = answered || state.status === 'finished';
+    if (isLocked) cls += ' locked';
+
+    return `<button class="${cls}" data-idx="${i}" ${isLocked ? 'disabled' : ''}>
+      <span class="opt-letter">${letters[i]}</span>${esc(opt)}
+    </button>`;
+  }).join('');
+
+  // Wire click
+  grid.querySelectorAll('.opt-btn:not([disabled])').forEach(btn => {
+    btn.onclick = () => submitAnswer(parseInt(btn.dataset.idx));
+  });
+}
+
+function renderAnswerStatus(s) {
+  const el = document.getElementById('answer-status');
+  if (state.myAnswer !== null) {
+    el.textContent = `You selected ${['A','B','C','D'][state.myAnswer]} — you can change until time is up`;
+    el.style.color = 'var(--accent)';
+  } else if (s.timerRunning || s.timerValue > 0) {
+    el.textContent = 'Select your answer ↑';
+    el.style.color = 'var(--muted)';
+  } else {
+    el.textContent = 'Time is up — no answer recorded';
+    el.style.color = 'var(--bad)';
+  }
+}
+
+function renderAnswerConfirmed(idx) {
+  document.getElementById('answer-status').textContent =
+    `You selected ${['A','B','C','D'][idx]} — you can change until time is up`;
+  document.getElementById('answer-status').style.color = 'var(--accent)';
+  // Re-highlight selected option without re-rendering all options
+  document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
+  const sel = document.querySelector(`.opt-btn[data-idx="${idx}"]`);
+  if (sel) sel.classList.add('selected');
+}
+
+/* ══════════════════════════════════════════
+   TIMER BAR
+══════════════════════════════════════════ */
+function updateTimerBar(val, running) {
+  const bar = document.getElementById('timer-bar');
+  const txt = document.getElementById('timer-val');
+  if (val === null || val === undefined) { bar.style.width = '100%'; txt.textContent = '—'; return; }
+  _timerMax  = _timerMax || 30;
+  const pct  = Math.max(0, Math.min(100, (val / _timerMax) * 100));
+  bar.style.width = pct + '%';
+  bar.className   = 'timer-bar-fill' + (val <= 5 ? ' urgent' : '');
+  txt.textContent = val + 's';
+}
+
+/* ══════════════════════════════════════════
+   SUBMIT ANSWER
+══════════════════════════════════════════ */
+function submitAnswer(optionIndex) {
+  if (!state.participantId) return;
+
+  // Optimistic UI update
+  state.myAnswer = optionIndex;
+  document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
+  const sel = document.querySelector(`.opt-btn[data-idx="${optionIndex}"]`);
+  if (sel) sel.classList.add('selected');
+  document.getElementById('answer-status').textContent =
+    `You selected ${'ABCD'[optionIndex]} — you can change until time is up`;
+  document.getElementById('answer-status').style.color = 'var(--accent)';
+
+  // Send via WS (fastest) with HTTP fallback
+  const payload = {
+    type: 'submitAnswer',
+    roundIndex:    state.currentRound,
+    questionIndex: state.currentQ,
+    optionIndex,
+  };
+
+  if (state.ws && state.wsReady && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify(payload));
+  } else {
+    // HTTP fallback
+    fetch(`${BASE_URL}/api/session/${state.code}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        participantId:  state.participantId,
+        roundIndex:     state.currentRound,
+        questionIndex:  state.currentQ,
+        optionIndex,
+      }),
+    }).catch(e => toast('Answer send failed — check connection.'));
+  }
+}
+
+/* ══════════════════════════════════════════
+   REVEAL SCREEN
+══════════════════════════════════════════ */
+function showRevealScreen(s) {
+  showScreen('s-reveal');
+  document.getElementById('rev-score').textContent = s.myScore || state.myScore || 0;
+  document.getElementById('rev-pos').textContent   = getMyPos(s.leaderboard);
+
+  // Notice
+  const notice = document.getElementById('reveal-notice');
+  const correct = s.correctAnswer;
+  const myAns   = state.myAnswer;
+  const medals  = ['🥇','🥈','🥉'];
+
+  if (myAns === null || myAns === undefined) {
+    notice.className = 'reveal-notice reveal-none';
+    notice.textContent = '— You did not answer this question —';
+  } else if (myAns === correct) {
+    notice.className = 'reveal-notice reveal-correct';
+    notice.textContent = `✔ Correct! +${s.quiz?.scores?.correct || 10} points`;
+  } else {
+    notice.className = 'reveal-notice reveal-wrong';
+    notice.textContent = `✗ Wrong — correct answer was ${'ABCD'[correct]}`;
+  }
+
+  // Top 5 leaderboard
+  const lb = (s.leaderboard || []).slice(0, 5);
+  document.getElementById('rev-leaderboard').innerHTML = lb.map((p, i) =>
+    `<div class="lb-row ${p.id === state.participantId ? 'me' : ''}">
+      <div class="lb-pos">${medals[i] || i+1}</div>
+      <div><div class="lb-name">${esc(p.name)}</div>${p.team ? `<div class="lb-team">${esc(p.team)}</div>` : ''}</div>
+      <div class="lb-score">${p.score}</div>
+    </div>`
+  ).join('') || '<div style="color:var(--muted);font-size:13px;">No scores yet.</div>';
+
+  // Reset myAnswer for next question
+  state.myAnswer = null;
+}
+
+/* ══════════════════════════════════════════
+   FINISHED SCREEN
+══════════════════════════════════════════ */
+function showFinished(lb) {
+  showScreen('s-finished');
+  const medals = ['🥇','🥈','🥉'];
+  const trophies = ['🥇','🥈','🥉','🎖️','🏅'];
+  const myIdx = lb.findIndex(p => p.id === state.participantId);
+  const pos   = myIdx >= 0 ? myIdx + 1 : null;
+  const posLabel = pos ? (pos === 1 ? '1st Place!' : pos === 2 ? '2nd Place' : pos === 3 ? '3rd Place' : `${pos}th Place`) : '—';
+
+  document.getElementById('finish-trophy').textContent = trophies[myIdx] || '🎖️';
+  document.getElementById('finish-pos').textContent   = posLabel;
+  document.getElementById('finish-score').textContent = `${state.myScore || 0} points`;
+
+  document.getElementById('finish-leaderboard').innerHTML = lb.map((p, i) =>
+    `<div class="lb-row ${p.id === state.participantId ? 'me' : ''}">
+      <div class="lb-pos">${medals[i] || i+1}</div>
+      <div><div class="lb-name">${esc(p.name)}</div>${p.team ? `<div class="lb-team">${esc(p.team)}</div>` : ''}</div>
+      <div class="lb-score">${p.score}</div>
+    </div>`
+  ).join('');
+}
+
+/* ══════════════════════════════════════════
+   PARTICIPANT CHIPS (waiting room)
+══════════════════════════════════════════ */
+function updateParticipantChips(participants) {
+  const el = document.getElementById('participant-chips');
+  if (!el) return;
+  el.innerHTML = participants.map(p =>
+    `<span class="chip">${esc(p.name)}</span>`
+  ).join('') || '<span style="color:var(--muted);font-size:13px;">No one else yet.</span>';
+}
+
+/* ══════════════════════════════════════════
+   HELPERS
+══════════════════════════════════════════ */
+function getMyPos(lb) {
+  if (!lb || !state.participantId) return '—';
+  const idx = lb.findIndex(p => p.id === state.participantId);
+  if (idx < 0) return '—';
+  const n = idx + 1;
+  return n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : n + 'th';
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+}
+
+/* ══════════════════════════════════════════
+   POLL FALLBACK (when WS drops)
+   Every 4 seconds, fetch current state via HTTP
+══════════════════════════════════════════ */
+setInterval(async () => {
+  if (state.wsReady || !state.participantId || state.status === 'waiting') return;
+  try {
+    const res = await fetch(`${BASE_URL}/api/session/${state.code}/state?participantId=${state.participantId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    applyQuizState(data);
+  } catch {}
+}, 4000);
+
+/* ══════════════════════════════════════════
+   RECONNECT ON RELOAD
+══════════════════════════════════════════ */
+(function tryReconnect() {
+  const savedCode = localStorage.getItem('mqe_code');
+  const savedPid  = localStorage.getItem('mqe_pid');
+  const savedName = localStorage.getItem('mqe_name');
+  if (!savedCode || !savedPid) return;
+
+  // Try to resume session
+  fetch(`${BASE_URL}/api/session/${savedCode}`).then(r => {
+    if (!r.ok) return;
+    return r.json();
+  }).then(data => {
+    if (!data || data.status === 'finished') return;
+    state.code = savedCode;
+    state.participantId = savedPid;
+    state.name = savedName || '';
+    document.getElementById('wait-title').textContent = data.quizTitle || 'Morbise Quiz';
+    document.getElementById('wait-name-display').textContent = state.name;
+    showScreen('s-waiting');
+    connectWS();
+    toast('Reconnected to session.');
+  }).catch(() => {});
+})();
+</script>
+</body>
+</html>
