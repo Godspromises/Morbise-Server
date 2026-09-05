@@ -1,0 +1,13 @@
+# Railway deployment configuration
+# https://railway.app
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "node server.js"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "morbise-server"
