@@ -388,8 +388,13 @@ async function checkCode() {
     state.code     = code;
     state.quizData = data;
     document.getElementById('join-quiz-title').textContent = data.quizTitle || 'Morbise Quiz';
-    document.getElementById('join-quiz-meta').textContent  =
-      `${data.rounds?.length || 0} round(s) · ${data.participants || 0} participant(s) joined`;
+    let metaText = `${data.rounds?.length || 0} round(s) · ${data.participants || 0} joined`;
+    if (data.scheduledAt) {
+      const dt = new Date(data.scheduledAt);
+      const label = dt.toLocaleString(undefined, { dateStyle:'medium', timeStyle:'short' });
+      metaText += ` · Scheduled: ${label}`;
+    }
+    document.getElementById('join-quiz-meta').textContent = metaText;
     showScreen('s-join');
     document.getElementById('inp-name').focus();
   } catch (e) {
@@ -433,12 +438,19 @@ async function joinQuiz() {
     localStorage.setItem('mqe_pid',  state.participantId);
     localStorage.setItem('mqe_code', state.code);
     localStorage.setItem('mqe_name', state.name);
+    localStorage.setItem('mqe_team', state.team);
 
     // Go to waiting room
-    document.getElementById('wait-title').textContent = data.quizTitle || 'Morbise Quiz';
-    document.getElementById('wait-meta').textContent  = state.code;
+    document.getElementById('wait-title').textContent       = data.quizTitle || 'Morbise Quiz';
     document.getElementById('wait-name-display').textContent = name;
     document.getElementById('wait-team-display').textContent = team || '';
+    let waitMeta = `Code: ${state.code}`;
+    if (data.scheduledAt) {
+      const dt = new Date(data.scheduledAt);
+      const label = dt.toLocaleString(undefined, { dateStyle:'medium', timeStyle:'short' });
+      waitMeta += ` · Scheduled: ${label}`;
+    }
+    document.getElementById('wait-meta').textContent = waitMeta;
     showScreen('s-waiting');
 
     // Connect WebSocket
@@ -785,29 +797,94 @@ setInterval(async () => {
 }, 4000);
 
 /* ══════════════════════════════════════════
-   RECONNECT ON RELOAD
+   SMART RECONNECT ON RELOAD
+   Logic:
+   - Same browser + same code → skip registration → waiting room
+   - Same browser + new URL code → clear storage → show registration
+   - Session finished → clear storage → show registration
+   - No saved session → normal join flow
 ══════════════════════════════════════════ */
-(function tryReconnect() {
+(async function tryReconnect() {
   const savedCode = localStorage.getItem('mqe_code');
   const savedPid  = localStorage.getItem('mqe_pid');
   const savedName = localStorage.getItem('mqe_name');
-  if (!savedCode || !savedPid) return;
 
-  // Try to resume session
-  fetch(`${BASE_URL}/api/session/${savedCode}`).then(r => {
-    if (!r.ok) return;
-    return r.json();
-  }).then(data => {
-    if (!data || data.status === 'finished') return;
-    state.code = savedCode;
+  // URL has a code — check if it matches saved session
+  const urlCode = window.location.pathname.split('/join/')[1]?.trim().toUpperCase() || '';
+
+  // If URL code exists but differs from saved code → new quiz, clear old session
+  if (urlCode && savedCode && urlCode !== savedCode) {
+    localStorage.removeItem('mqe_code');
+    localStorage.removeItem('mqe_pid');
+    localStorage.removeItem('mqe_name');
+    // Pre-fill the code and go to registration
+    document.getElementById('inp-code').value = urlCode;
+    setTimeout(checkCode, 400);
+    return;
+  }
+
+  // No saved session at all
+  if (!savedCode || !savedPid) {
+    // If URL has a code, pre-fill and auto-check
+    if (urlCode) {
+      document.getElementById('inp-code').value = urlCode;
+      setTimeout(checkCode, 400);
+    }
+    return;
+  }
+
+  // Same code saved — attempt silent reconnect
+  try {
+    const res = await fetch(`${BASE_URL}/api/session/${savedCode}`);
+    if (!res.ok) throw new Error('Session not found');
+    const data = await res.json();
+
+    // Session finished — clear and show fresh registration
+    if (data.status === 'finished') {
+      localStorage.removeItem('mqe_code');
+      localStorage.removeItem('mqe_pid');
+      localStorage.removeItem('mqe_name');
+      if (urlCode) {
+        document.getElementById('inp-code').value = urlCode;
+        setTimeout(checkCode, 400);
+      }
+      return;
+    }
+
+    // Session is active — silent reconnect, go to waiting room
+    state.code          = savedCode;
     state.participantId = savedPid;
-    state.name = savedName || '';
-    document.getElementById('wait-title').textContent = data.quizTitle || 'Morbise Quiz';
+    state.name          = savedName || '';
+    state.status        = data.status;
+
+    // Update waiting room UI
+    document.getElementById('wait-title').textContent       = data.quizTitle || 'Morbise Quiz';
+    document.getElementById('wait-meta').textContent        = savedCode;
     document.getElementById('wait-name-display').textContent = state.name;
+    document.getElementById('wait-team-display').textContent = '';
+
+    // Show scheduled time if set
+    if (data.scheduledAt) {
+      const dt = new Date(data.scheduledAt);
+      const label = dt.toLocaleString(undefined, { dateStyle:'medium', timeStyle:'short' });
+      document.getElementById('wait-meta').textContent = `Code: ${savedCode} · Scheduled: ${label}`;
+    }
+
+    // Go directly to waiting room — organizer will start the quiz
     showScreen('s-waiting');
     connectWS();
-    toast('Reconnected to session.');
-  }).catch(() => {});
+    toast('Welcome back, ' + state.name + '!');
+
+  } catch (e) {
+    // Can't reach server or session gone — show fresh registration
+    localStorage.removeItem('mqe_code');
+    localStorage.removeItem('mqe_pid');
+    localStorage.removeItem('mqe_name');
+    if (urlCode) {
+      document.getElementById('inp-code').value = urlCode;
+      setTimeout(checkCode, 400);
+    }
+  }
 })();
 </script>
 </body>
