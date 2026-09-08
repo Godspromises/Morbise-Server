@@ -49,6 +49,7 @@ function createSessionState(id, code, quizData, mode) {
     id, code, mode,
     quizTitle:    quizData.title  || 'Untitled',
     quiz:         quizData,
+    scheduledAt:  quizData.scheduledAt || null,
     status:       'waiting',    // waiting | active | paused | finished
     currentRound: 0,
     currentQ:     0,
@@ -99,14 +100,19 @@ app.get('/health', (req, res) => {
 // POST /api/session/create
 // Called by the desktop app when host clicks "Run Quiz" (Live/Hybrid mode)
 app.post('/api/session/create', (req, res) => {
-  const { quizData, mode } = req.body;
+  const body = req.body;
+  const { quizData, mode } = body;
   if (!quizData || !quizData.rounds) {
     return res.status(400).json({ error: 'quizData with rounds required' });
   }
 
   const id   = uuidv4();
-  const code = generateCode();
   const m    = mode || quizData.mode || 'live';
+  // Use the quiz's permanent code if provided and not already active
+  const preferred = (body.preferredCode || '').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const code = (preferred.length === 6 && !sessions.has(preferred))
+    ? preferred
+    : generateCode();
 
   // Persist to DB
   
@@ -128,10 +134,11 @@ app.get('/api/session/:code', (req, res) => {
   if (!s) return res.status(404).json({ error: 'Session not found' });
   res.json({
     code,
-    quizTitle: s.quizTitle,
-    mode:      s.mode,
-    status:    s.status,
-    rounds:    s.quiz.rounds.map(r => ({ name: r.name, questions: r.questions.length })),
+    quizTitle:   s.quizTitle,
+    mode:        s.mode,
+    status:      s.status,
+    scheduledAt: s.scheduledAt || null,
+    rounds:      s.quiz.rounds.map(r => ({ name: r.name, questions: r.questions.length })),
     participants: s.participants.size,
   });
 });
