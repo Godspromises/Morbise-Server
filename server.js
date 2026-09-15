@@ -345,6 +345,8 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         const { state } = msg;
         if (!state) return;
         // Update server-side session state
+        const prevRound = s.currentRound;
+        const prevQ     = s.currentQ;
         s.currentRound      = state.currentRound      ?? s.currentRound;
         s.currentQ          = state.currentQ           ?? s.currentQ;
         s.timerValue        = state.timer              ?? s.timerValue;
@@ -353,11 +355,16 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         s.optionsRevealed   = state.optionsRevealed    ?? s.optionsRevealed;
         s.answerRevealed    = state.answerRevealed     ?? s.answerRevealed;
         s.projectorView     = state.view               ?? s.projectorView;
+        s.roundType         = state.roundMode          || s.roundType;
         s.status = 'active';
 
-        // Score answers if answer just revealed
-        if (state.answerRevealed && state.view === 'question') {
-          scoreQuestion(s, s.currentRound, s.currentQ);
+        // Auto-reset when question changes
+        if (s.currentRound !== prevRound || s.currentQ !== prevQ) {
+          s.answerRevealed     = false;
+          s.nominatedPid       = null;
+          s.nominatedSelection = null;
+          s.firstCorrectWinner = null;
+          s.leaderboardVisible = false;
         }
 
         // Broadcast to projector (full state) and participants (their view)
@@ -379,6 +386,8 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         s.revealedQuestion   = false;
         s.optionsRevealed    = 0;
         s.answerRevealed     = false;
+        s.revealedQuestion   = false;
+        s.optionsRevealed    = 0;
         s.timerRunning       = false;
         s.nominatedPid       = null;
         s.nominatedSelection = null;
@@ -460,6 +469,17 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         s.roundType = roundType || 'standard';
         s.nominatedPid = null;
         s.firstCorrectWinner = null;
+        broadcastParticipantUpdates(code, s);
+        break;
+      }
+
+      // ── REVEAL ANSWER: moderator clicked Reveal Answer
+      case 'revealAnswer': {
+        const { roundIndex, questionIndex } = msg;
+        // Score all live answers
+        scoreQuestion(s, roundIndex ?? s.currentRound, questionIndex ?? s.currentQ);
+        s.answerRevealed = true;
+        // Broadcast updated state with correct answer to all phones
         broadcastParticipantUpdates(code, s);
         break;
       }
@@ -625,6 +645,7 @@ function buildParticipantState(s, pid) {
     nominatedName:     s.roundType === 'nominated'
                          ? (s.participants.get(s.nominatedPid)?.name || null)
                          : null,
+    nominatedSelection: s.nominatedSelection ?? null,
     projectorView:     s.projectorView,
     lobbyCountdown:    s.lobbyCountdown,
     lobbyRunning:      s.lobbyRunning,
