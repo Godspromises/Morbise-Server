@@ -272,9 +272,11 @@ button,input,select{font:inherit;color:inherit;}
      SCREEN 4: LIVE QUESTION
 ════════════════════════════════════════ -->
 <div class="screen" id="s-question">
-  <div class="score-strip">
-    <div><div class="sc-label">My Score</div><div class="sc-val" id="my-score">0</div></div>
-    <div style="text-align:right;"><div class="sc-label">Position</div><div class="sc-pos" id="my-pos">—</div></div>
+  <div class="score-strip" style="justify-content:center;">
+    <div style="text-align:center;">
+      <div class="sc-label">My Score</div>
+      <div class="sc-val" id="my-score">0</div>
+    </div>
   </div>
   <div class="timer-wrap">
     <div class="timer-bar-bg"><div class="timer-bar-fill" id="timer-bar" style="width:100%;"></div></div>
@@ -293,9 +295,11 @@ button,input,select{font:inherit;color:inherit;}
      SCREEN 5: ANSWER REVEALED
 ════════════════════════════════════════ -->
 <div class="screen" id="s-reveal">
-  <div class="score-strip">
-    <div><div class="sc-label">My Score</div><div class="sc-val" id="rev-score">0</div></div>
-    <div style="text-align:right;"><div class="sc-label">Position</div><div class="sc-pos" id="rev-pos">—</div></div>
+  <div class="score-strip" style="justify-content:center;">
+    <div style="text-align:center;">
+      <div class="sc-label">My Score</div>
+      <div class="sc-val" id="rev-score">0</div>
+    </div>
   </div>
   <div id="reveal-notice" class="reveal-notice reveal-none">—</div>
   <div class="card" style="max-width:420px;width:100%;">
@@ -672,8 +676,11 @@ function applyQuizState(s) {
     showQuestionCountdown(s.questionCountdown); return;
   }
 
-  if (s.answerRevealed) { showRevealScreen(s); }
-  else                   { showQuestionScreen(s); }
+  if (s.answerRevealed) {
+    showRevealScreen(s);
+  } else {
+    showQuestionScreen(s);
+  }
 }
 
 function showLobbyCountdown(secs) {
@@ -739,16 +746,34 @@ function showQuestionScreen(s) {
   document.getElementById('q-round-tag').textContent = s.roundName || `Round ${s.currentRound + 1}`;
   document.getElementById('q-num-tag').textContent   = `Question ${s.currentQ + 1} of ${s.totalQuestions || '?'}`;
   document.getElementById('q-text').textContent      = s.question || 'Question incoming…';
-  document.getElementById('my-score').textContent    = s.myScore || state.myScore || 0;
-  document.getElementById('my-pos').textContent      = getMyPos(s.leaderboard);
+  document.getElementById('my-score').textContent    = s.myScore ?? state.myScore ?? 0;
 
   // Nominated mode notice
   const noticeEl = document.getElementById('answer-status');
   if (s.roundType === 'nominated') {
     if (s.isNominated) {
-      if (noticeEl) { noticeEl.textContent = '👉 You have been nominated — answer now!'; noticeEl.style.color = 'var(--blue)'; }
+      if (noticeEl) {
+        noticeEl.textContent = '👉 You have been nominated — choose your answer!';
+        noticeEl.style.color = 'var(--blue)';
+      }
+    } else if (s.nominatedName) {
+      if (noticeEl) {
+        noticeEl.textContent = `Watching: ${s.nominatedName} is answering`;
+        noticeEl.style.color = 'var(--muted)';
+      }
+      // Show nominated contestant's current selection on all non-nominated phones
+      if (s.nominatedSelection !== undefined && s.nominatedSelection !== null) {
+        setTimeout(() => {
+          document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
+          const sel = document.querySelector(`.opt-btn[data-idx="${s.nominatedSelection}"]`);
+          if (sel) { sel.classList.add('selected'); sel.style.borderColor = 'var(--blue)'; }
+        }, 100);
+      }
     } else {
-      if (noticeEl) { noticeEl.textContent = `Waiting… ${s.nominatedName ? s.nominatedName + ' is answering' : 'Moderator will nominate someone'}`; noticeEl.style.color = 'var(--muted)'; }
+      if (noticeEl) {
+        noticeEl.textContent = 'Waiting… moderator will nominate someone';
+        noticeEl.style.color = 'var(--muted)';
+      }
     }
   } else if (s.roundType === 'firstCorrect') {
     if (noticeEl) { noticeEl.textContent = '⚡ Speed round — first correct answer wins!'; noticeEl.style.color = 'var(--accent)'; }
@@ -878,35 +903,39 @@ function submitAnswer(optionIndex) {
 ══════════════════════════════════════════ */
 function showRevealScreen(s) {
   showScreen('s-reveal');
-  document.getElementById('rev-score').textContent = s.myScore || state.myScore || 0;
-  document.getElementById('rev-pos').textContent   = getMyPos(s.leaderboard);
+  document.getElementById('rev-score').textContent = s.myScore ?? state.myScore ?? 0;
 
-  // Notice
-  const notice = document.getElementById('reveal-notice');
+  // Correct answer notice — always show the correct answer letter
+  const notice  = document.getElementById('reveal-notice');
   const correct = s.correctAnswer;
-  const myAns   = state.myAnswer;
+  const myAns   = s.myAnswer ?? state.myAnswer;
   const medals  = ['🥇','🥈','🥉'];
+  const correctLetter = correct !== null && correct !== undefined ? 'ABCD'[correct] : '?';
 
   if (myAns === null || myAns === undefined) {
-    notice.className = 'reveal-notice reveal-none';
-    notice.textContent = '— You did not answer this question —';
+    notice.className   = 'reveal-notice reveal-none';
+    notice.textContent = `Correct answer: ${correctLetter} — you did not answer`;
   } else if (myAns === correct) {
-    notice.className = 'reveal-notice reveal-correct';
-    notice.textContent = `✔ Correct! +${s.quiz?.scores?.correct || 10} points`;
+    notice.className   = 'reveal-notice reveal-correct';
+    notice.textContent = `✔ Correct! Answer was ${correctLetter}`;
   } else {
-    notice.className = 'reveal-notice reveal-wrong';
-    notice.textContent = `✗ Wrong — correct answer was ${'ABCD'[correct]}`;
+    notice.className   = 'reveal-notice reveal-wrong';
+    notice.textContent = `✗ Wrong — correct answer was ${correctLetter}`;
   }
 
-  // Top 5 leaderboard
+  // Leaderboard — only show if moderator revealed it
   const lb = (s.leaderboard || []).slice(0, 5);
-  document.getElementById('rev-leaderboard').innerHTML = lb.map((p, i) =>
-    `<div class="lb-row ${p.id === state.participantId ? 'me' : ''}">
-      <div class="lb-pos">${medals[i] || i+1}</div>
-      <div><div class="lb-name">${esc(p.name)}</div>${p.team ? `<div class="lb-team">${esc(p.team)}</div>` : ''}</div>
-      <div class="lb-score">${p.score}</div>
-    </div>`
-  ).join('') || '<div style="color:var(--muted);font-size:13px;">No scores yet.</div>';
+  const lbEl = document.getElementById('rev-leaderboard');
+  if (lb.length) {
+    lbEl.innerHTML = lb.map((p, i) =>
+      `<div class="lb-row ${p.id === state.participantId ? 'me' : ''}">
+        <div class="lb-pos">${medals[i] || i+1}</div>
+        <div><div class="lb-name">${esc(p.name)}</div></div>
+        <div class="lb-score">${p.score}</div>
+      </div>`).join('');
+  } else {
+    lbEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:10px;">Waiting for moderator to reveal leaderboard…</div>';
+  }
 
   // Submission times for firstCorrect mode
   const subEl = document.getElementById('rev-leaderboard');
