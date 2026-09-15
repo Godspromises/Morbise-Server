@@ -159,6 +159,45 @@ button,input,select{font:inherit;color:inherit;}
 .morbise-footer .fw{font-weight:700;letter-spacing:.1em;color:rgba(229,184,75,.6);}
 .morbise-footer .fm{font-weight:950;font-style:italic;letter-spacing:.15em;color:rgba(229,184,75,.85);}
 
+/* ═══════════════ COUNTDOWN OVERLAY ═══════════════ */
+.countdown-overlay{position:fixed;inset:0;background:rgba(7,17,31,.92);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  z-index:200;transition:opacity .4s;}
+.countdown-num{font-size:120px;font-weight:950;color:var(--accent);
+  font-style:italic;animation:pop .3s ease-out;}
+@keyframes pop{from{transform:scale(1.4);opacity:0;}to{transform:scale(1);opacity:1;}}
+.countdown-label{font-size:16px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);margin-top:-10px;}
+
+/* ═══════════════ NOT ADMITTED ═══════════════ */
+.not-admitted{text-align:center;padding:20px 10px;}
+.not-admitted .icon{font-size:48px;margin-bottom:12px;}
+.not-admitted p{color:var(--muted);font-size:14px;line-height:1.6;}
+
+/* ═══════════════ NOMINATED NOTICE ═══════════════ */
+.nominated-notice{padding:12px 14px;border-radius:10px;font-size:15px;font-weight:800;
+  text-align:center;margin-bottom:12px;width:100%;max-width:420px;
+  background:#1a2e48;border:1.5px solid var(--blue);color:var(--blue);}
+.watching-notice{padding:10px 14px;border-radius:10px;font-size:14px;font-weight:700;
+  text-align:center;margin-bottom:12px;width:100%;max-width:420px;
+  background:var(--panel2);border:1.5px solid var(--line2);color:var(--muted);}
+
+/* ═══════════════ WATERMARK ON PHONE ═══════════════ */
+.phone-wm{position:fixed;pointer-events:none;z-index:90;display:flex;align-items:center;}
+.phone-wm.top-left{top:10px;left:10px;}
+.phone-wm.top-center{top:10px;left:50%;transform:translateX(-50%);}
+.phone-wm.top-right{top:10px;right:10px;}
+.phone-wm.footer{bottom:30px;left:0;right:0;justify-content:center;padding:0 12px;}
+.phone-wm img{max-height:36px;object-fit:contain;opacity:.85;}
+.phone-wm span{font-size:12px;font-weight:800;letter-spacing:.06em;
+  color:rgba(255,255,255,.8);text-shadow:0 1px 4px rgba(0,0,0,.7);}
+
+/* ═══════════════ SUBMISSION TIMES (FIRST CORRECT) ═══════════════ */
+.submission-row{display:grid;grid-template-columns:28px 1fr 32px auto;
+  gap:8px;align-items:center;padding:7px 10px;border-radius:7px;
+  border:1px solid var(--line);font-size:13px;margin-bottom:5px;}
+.submission-row.winner{border-color:var(--good);background:#123b2b;}
+
 /* ═══════════════ HIDDEN SCREEN HELPER ═══════════════ */
 .hidden{display:none!important;}
 </style>
@@ -283,6 +322,15 @@ button,input,select{font:inherit;color:inherit;}
     <div id="finish-leaderboard" class="lb-list"></div>
   </div>
 </div>
+
+<!-- COUNTDOWN OVERLAY -->
+<div id="countdownOverlay" class="countdown-overlay hidden">
+  <div class="countdown-num" id="countdownNum">3</div>
+  <div class="countdown-label" id="countdownLabel">Get Ready!</div>
+</div>
+
+<!-- WATERMARK -->
+<div id="phoneWatermark" class="phone-wm hidden"></div>
 
 <!-- TOAST -->
 <div id="toast"></div>
@@ -534,6 +582,47 @@ function handleServerMessage(msg) {
       state.status = 'finished';
       showFinished(msg.leaderboard || []);
       break;
+
+    case 'lobbyCountdown':
+      showLobbyCountdown(msg.seconds);
+      break;
+
+    case 'lobbyEnded':
+      // Lobby ended — quiz is starting
+      document.getElementById('wait-meta').textContent = 'Quiz is starting…';
+      break;
+
+    case 'questionCountdown':
+      showQuestionCountdown(msg.seconds);
+      break;
+
+    case 'questionCountdownEnd':
+      const ov = document.getElementById('countdownOverlay');
+      if (ov) ov.classList.add('hidden');
+      break;
+
+    case 'nominatedSelection':
+      // Show what the nominated contestant selected on all phones
+      if (msg.participantId !== state.participantId) {
+        // Other participants see nominated contestant's choice highlighted
+        document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
+        const sel = document.querySelector(`.opt-btn[data-idx="${msg.optionIndex}"]`);
+        if (sel) { sel.classList.add('selected'); sel.style.borderColor = 'var(--blue)'; }
+        const statusEl = document.getElementById('answer-status');
+        if (statusEl) {
+          statusEl.textContent = `${esc(msg.participantName)} selected ${'ABCD'[msg.optionIndex]}`;
+          statusEl.style.color = 'var(--blue)';
+        }
+      }
+      break;
+
+    case 'admittedUpdate':
+      // Re-fetch state to check if we're now admitted
+      if (state.participantId && msg.admitted?.includes(state.participantId)) {
+        fetch(`${BASE_URL}/api/session/${state.code}/state?participantId=${state.participantId}`)
+          .then(r => r.json()).then(applyQuizState).catch(()=>{});
+      }
+      break;
   }
 }
 
@@ -549,19 +638,93 @@ function applyQuizState(s) {
   state.status       = s.status;
   state.currentRound = s.currentRound;
   state.currentQ     = s.currentQ;
-  state.myScore      = s.myScore || state.myScore;
+  state.myScore      = s.myScore ?? state.myScore;
   if (s.myAnswer !== null && s.myAnswer !== undefined) state.myAnswer = s.myAnswer;
 
-  // Route to correct screen based on status + reveal state
-  if (s.status === 'finished') { showFinished(s.leaderboard || []); return; }
-  if (s.status === 'waiting')  { showScreen('s-waiting'); return; }
+  // Apply watermark from quiz settings
+  renderPhoneWatermark(s.watermark);
 
-  // Active quiz
-  if (s.answerRevealed) {
-    showRevealScreen(s);
-  } else {
-    showQuestionScreen(s);
+  // Not yet admitted — show waiting room
+  if (!s.isAdmitted && (s.status === 'waiting' || s.status === 'lobby')) {
+    showScreen('s-waiting');
+    // Show lobby countdown if running
+    if (s.lobbyRunning && s.lobbyCountdown > 0) {
+      showLobbyCountdown(s.lobbyCountdown);
+    }
+    return;
   }
+
+  if (s.status === 'finished')              { showFinished(s.leaderboard || []); return; }
+  if (s.status === 'waiting' || s.status === 'lobby') { showScreen('s-waiting'); return; }
+
+  // Projector-driven views — all phones follow moderator
+  if (s.projectorView === 'roundResult' || s.projectorView === 'totalResult') {
+    showResultsScreen(s); return;
+  }
+
+  // Leaderboard gate — only show if moderator revealed it
+  if (s.leaderboard && s.projectorView === 'question' && s.answerRevealed) {
+    // Don't auto-show — wait for moderator to reveal
+  }
+
+  // Question countdown
+  if (s.questionCountdown > 0) {
+    showQuestionCountdown(s.questionCountdown); return;
+  }
+
+  if (s.answerRevealed) { showRevealScreen(s); }
+  else                   { showQuestionScreen(s); }
+}
+
+function showLobbyCountdown(secs) {
+  const el = document.getElementById('wait-meta');
+  if (el) el.textContent = `Quiz starts in ${secs}s…`;
+}
+
+function showQuestionCountdown(secs) {
+  const overlay = document.getElementById('countdownOverlay');
+  const num     = document.getElementById('countdownNum');
+  if (!overlay || !num) return;
+  num.textContent = secs;
+  overlay.classList.remove('hidden');
+  if (secs <= 0) overlay.classList.add('hidden');
+}
+
+function renderPhoneWatermark(wm) {
+  const el = document.getElementById('phoneWatermark');
+  if (!el) return;
+  if (!wm || wm.type === 'none') { el.className = 'phone-wm hidden'; el.innerHTML = ''; return; }
+  const posMap = { 'top-left':'top-left','top-center':'top-center','top-right':'top-right','footer':'footer' };
+  const cls = posMap[wm.position] || 'top-left';
+  el.className = `phone-wm ${cls}`;
+  const opacity = ((wm.opacity ?? 80) / 100).toFixed(2);
+  el.style.opacity = opacity;
+  if (wm.type === 'text' && wm.text) {
+    el.innerHTML = `<span>${esc(wm.text)}</span>`;
+  } else if (wm.type === 'image' && wm.imageUrl) {
+    const sz = wm.size || 60;
+    el.innerHTML = `<img src="${esc(wm.imageUrl)}" style="max-height:${sz}px;">`;
+  } else {
+    el.className = 'phone-wm hidden'; el.innerHTML = '';
+  }
+}
+
+function showResultsScreen(s) {
+  // All phones follow projector to results/leaderboard view
+  showScreen('s-reveal');
+  const lb = (s.leaderboard || []).slice(0, 5);
+  document.getElementById('rev-score').textContent = s.myScore || state.myScore || 0;
+  document.getElementById('rev-pos').textContent   = getMyPos(lb);
+  const notice = document.getElementById('reveal-notice');
+  notice.className   = 'reveal-notice reveal-none';
+  notice.textContent = s.projectorView === 'totalResult' ? '🏆 Final Leaderboard' : '📊 Round Results';
+  const medals = ['🥇','🥈','🥉'];
+  document.getElementById('rev-leaderboard').innerHTML = lb.map((p, i) =>
+    `<div class="lb-row ${p.id === state.participantId ? 'me' : ''}">
+      <div class="lb-pos">${medals[i] || i+1}</div>
+      <div><div class="lb-name">${esc(p.name)}</div></div>
+      <div class="lb-score">${p.score}</div>
+    </div>`).join('') || '<div class="muted small">No scores yet.</div>';
 }
 
 /* ══════════════════════════════════════════
@@ -569,21 +732,38 @@ function applyQuizState(s) {
 ══════════════════════════════════════════ */
 function showQuestionScreen(s) {
   showScreen('s-question');
+  // Hide countdown overlay
+  const overlay = document.getElementById('countdownOverlay');
+  if (overlay && s.questionCountdown <= 0) overlay.classList.add('hidden');
+
   document.getElementById('q-round-tag').textContent = s.roundName || `Round ${s.currentRound + 1}`;
   document.getElementById('q-num-tag').textContent   = `Question ${s.currentQ + 1} of ${s.totalQuestions || '?'}`;
-  document.getElementById('q-text').textContent      = s.question || (s.revealedQuestion === false ? 'Question incoming…' : '');
+  document.getElementById('q-text').textContent      = s.question || 'Question incoming…';
   document.getElementById('my-score').textContent    = s.myScore || state.myScore || 0;
   document.getElementById('my-pos').textContent      = getMyPos(s.leaderboard);
+
+  // Nominated mode notice
+  const noticeEl = document.getElementById('answer-status');
+  if (s.roundType === 'nominated') {
+    if (s.isNominated) {
+      if (noticeEl) { noticeEl.textContent = '👉 You have been nominated — answer now!'; noticeEl.style.color = 'var(--blue)'; }
+    } else {
+      if (noticeEl) { noticeEl.textContent = `Waiting… ${s.nominatedName ? s.nominatedName + ' is answering' : 'Moderator will nominate someone'}`; noticeEl.style.color = 'var(--muted)'; }
+    }
+  } else if (s.roundType === 'firstCorrect') {
+    if (noticeEl) { noticeEl.textContent = '⚡ Speed round — first correct answer wins!'; noticeEl.style.color = 'var(--accent)'; }
+  }
 
   // Timer bar
   updateTimerBar(s.timerValue, s.timerRunning);
 
-  // Options
-  renderOptions(s.options || [], s.optionsRevealed, false, null, s.myAnswer);
-  renderAnswerStatus(s);
+  // Render options — disable if nominated mode and not this participant's turn
+  const canAnswer = s.canAnswer !== false;
+  renderOptions(s.options || [], s.optionsRevealed, false, null, s.myAnswer, !canAnswer);
+  if (s.roundType !== 'nominated') renderAnswerStatus(s);
 }
 
-function renderOptions(options, revealed, answered, correctAnswer, myAnswer) {
+function renderOptions(options, revealed, answered, correctAnswer, myAnswer, forceDisabled) {
   const grid = document.getElementById('options-grid');
   const letters = ['A','B','C','D'];
 
@@ -600,8 +780,9 @@ function renderOptions(options, revealed, answered, correctAnswer, myAnswer) {
       if (i === correctAnswer) cls += ' correct';
       else if (myAnswer === i) cls += ' wrong';
     }
-    const isLocked = answered || state.status === 'finished';
+    const isLocked = answered || state.status === 'finished' || forceDisabled;
     if (isLocked) cls += ' locked';
+    if (forceDisabled) cls += ' disabled-opt';
 
     return `<button class="${cls}" data-idx="${i}" ${isLocked ? 'disabled' : ''}>
       <span class="opt-letter">${letters[i]}</span>${esc(opt)}
@@ -726,6 +907,23 @@ function showRevealScreen(s) {
       <div class="lb-score">${p.score}</div>
     </div>`
   ).join('') || '<div style="color:var(--muted);font-size:13px;">No scores yet.</div>';
+
+  // Submission times for firstCorrect mode
+  const subEl = document.getElementById('rev-leaderboard');
+  if (s.roundType === 'firstCorrect' && s.submissionTimes && s.submissionTimes.length) {
+    const medals = ['🥇','🥈','🥉'];
+    const first  = s.submissionTimes[0];
+    subEl.innerHTML = '<div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Submission Order</div>' +
+      s.submissionTimes.map((t, i) => {
+        const delay   = i === 0 ? 'First' : '+' + ((t.submittedAt - first.submittedAt)/1000).toFixed(1) + 's';
+        return `<div class="submission-row ${t.correct && i===0 ? 'winner' : ''}">
+          <span style="font-size:16px;">${medals[i] || i+1}</span>
+          <span style="font-weight:700;">${esc(t.name)}</span>
+          <span style="font-weight:900;color:${t.correct?'var(--good)':'var(--bad)'};">${'ABCD'[t.optionIndex]}</span>
+          <span style="font-size:11px;color:var(--muted);">${delay}</span>
+        </div>`;
+      }).join('');
+  }
 
   // Reset myAnswer for next question
   state.myAnswer = null;

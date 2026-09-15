@@ -50,17 +50,31 @@ function createSessionState(id, code, quizData, mode) {
     quizTitle:    quizData.title  || 'Untitled',
     quiz:         quizData,
     scheduledAt:  quizData.scheduledAt || null,
-    status:       'waiting',    // waiting | active | paused | finished
+    status:       'waiting',    // waiting | lobby | active | paused | finished
     currentRound: 0,
     currentQ:     0,
     timerValue:   0,
     timerRunning: false,
-    revealedQuestion: false,
-    optionsRevealed:  0,
-    answerRevealed:   false,
-    projectorView:    'question',
+    revealedQuestion:  false,
+    optionsRevealed:   0,
+    answerRevealed:    false,
+    projectorView:     'question',
+    // Round type state
+    roundType:         'standard', // standard | firstCorrect | nominated
+    nominatedPid:      null,       // participant nominated to answer
+    firstCorrectWinner:null,       // { pid, name, submittedAt } when first correct found
+    // Lobby countdown
+    lobbyCountdown:    0,          // seconds remaining before quiz starts
+    lobbyRunning:      false,
+    // Question pre-reveal countdown
+    questionCountdown: 0,
+    questionCountdownRunning: false,
+    // Leaderboard reveal gate — moderator controls when phones see it
+    leaderboardVisible: false,
+    // Participants
     participants:     new Map(), // participantId → ParticipantState
-    answers:          new Map(), // `${ri}:${qi}:${pid}` → optionIndex
+    admitted:         new Set(), // pids admitted through the lobby gate
+    answers:          new Map(), // `${ri}:${qi}:${pid}` → { optionIndex, submittedAt }
     scoredQuestions:  new Set(), // `${ri}:${qi}` (once revealed)
     createdAt:        Date.now(),
   };
@@ -362,10 +376,17 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         const { roundIndex, questionIndex } = msg;
         s.currentRound = roundIndex;
         s.currentQ     = questionIndex;
-        s.revealedQuestion = false;
-        s.optionsRevealed  = 0;
-        s.answerRevealed   = false;
-        s.timerRunning = false;
+        s.revealedQuestion   = false;
+        s.optionsRevealed    = 0;
+        s.answerRevealed     = false;
+        s.timerRunning       = false;
+        s.nominatedPid       = null;
+        s.nominatedSelection = null;
+        s.firstCorrectWinner = null;
+        s.leaderboardVisible = false;
+        // Set round type from quiz data
+        const r = s.quiz.rounds[roundIndex];
+        s.roundType = r?.roundMode || 'standard';
         broadcastParticipantUpdates(code, s);
         break;
       }
@@ -373,32 +394,145 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
       case 'kickParticipant': {
         const { participantId } = msg;
         s.participants.delete(participantId);
-        // Close their WS connection if open
+        s.admitted.delete(participantId);
         wsClients.get(code)?.forEach(c => {
           if (c._mqePid === participantId) c.close(1000, 'Removed by moderator');
         });
         broadcast(code, { type: 'participantList', participants: participantList(s) });
         break;
       }
+
+      // ── LOBBY: admit participant(s) from waiting room
+      case 'admitParticipant': {
+        const { participantId, admitAll } = msg;
+        if (admitAll) {
+          for (const [pid] of s.participants) s.admitted.add(pid);
+        } else if (participantId) {
+          s.admitted.add(participantId);
+        }
+        // Notify each admitted participant
+        broadcastParticipantUpdates(code, s);
+        broadcast(code, { type: 'admittedUpdate', admitted: [...s.admitted] });
+        break;
+      }
+
+      // ── LOBBY COUNTDOWN: start/stop/set
+      case 'lobbyCountdown': {
+        const { seconds, action } = msg;
+        if (action === 'start') {
+          s.lobbyCountdown = seconds || 60;
+          s.lobbyRunning   = true;
+          s.status         = 'lobby';
+          startLobbyCountdown(code, s);
+        } else if (action === 'stop') {
+          s.lobbyRunning  = false;
+          s.lobbyCountdown = 0;
+        }
+        broadcast(code, { type: 'lobbyCountdown', seconds: s.lobbyCountdown, running: s.lobbyRunning });
+        break;
+      }
+
+      // ── QUESTION COUNTDOWN: dramatic reveal countdown
+      case 'questionCountdown': {
+        const { seconds } = msg;
+        s.questionCountdown        = seconds || 3;
+        s.questionCountdownRunning = true;
+        broadcast(code, { type: 'questionCountdown', seconds: s.questionCountdown });
+        startQuestionCountdown(code, s);
+        break;
+      }
+
+      // ── NOMINATE: moderator picks who answers
+      case 'nominateParticipant': {
+        const { participantId } = msg;
+        s.nominatedPid = participantId || null;
+        s.roundType    = participantId ? 'nominated' : 'standard';
+        broadcastParticipantUpdates(code, s);
+        // Tell moderator who is nominated
+        broadcast(code, { type: 'nominatedUpdate', participantId: s.nominatedPid,
+          participantName: s.participants.get(participantId)?.name || '' });
+        break;
+      }
+
+      // ── ROUND TYPE: set for current round
+      case 'setRoundType': {
+        const { roundType } = msg;
+        s.roundType = roundType || 'standard';
+        s.nominatedPid = null;
+        s.firstCorrectWinner = null;
+        broadcastParticipantUpdates(code, s);
+        break;
+      }
+
+      // ── LEADERBOARD: reveal/hide to participants
+      case 'revealLeaderboard': {
+        s.leaderboardVisible = msg.visible !== false;
+        broadcastParticipantUpdates(code, s);
+        break;
+      }
+
+      // ── SELECTED OPTION: moderator selects on behalf (nominated mode + projector display)
+      case 'selectedOption': {
+        s.nominatedSelection = msg.optionIndex;
+        broadcastToRole(code, 'projector', { type: 'projectorState',
+          state: { ...buildModeratorState(s), selectedOption: msg.optionIndex,
+                   nominatedName: s.participants.get(s.nominatedPid)?.name || '' }});
+        broadcast(code, { type: 'nominatedSelection',
+          participantId: s.nominatedPid, optionIndex: msg.optionIndex,
+          participantName: s.participants.get(s.nominatedPid)?.name || '' });
+        break;
+      }
     }
   }
 
-  // Participants can send answers via WS (alternative to HTTP POST)
+  // Participants submit answers via WS
   if (role === 'participant' && msg.type === 'submitAnswer') {
     const { roundIndex, questionIndex, optionIndex } = msg;
     const qKey = `${roundIndex}:${questionIndex}`;
-    if (s.scoredQuestions.has(qKey)) return; // too late
+
+    // Block if already scored
+    if (s.scoredQuestions.has(qKey)) return;
+
+    // Block if not admitted
+    if (!s.admitted.has(pid)) return;
+
+    // Block if nominated mode and this participant is not nominated
+    if (s.roundType === 'nominated' && s.nominatedPid !== pid) {
+      ws.send(JSON.stringify({ type: 'answerBlocked', reason: 'notNominated' }));
+      return;
+    }
+
+    // In firstCorrect mode: only allow if no winner yet, and allow changing until timer runs out
     const aKey = `${qKey}:${pid}`;
-    s.answers.set(aKey, { optionIndex, submittedAt: Date.now() });
+    const now  = Date.now();
+    s.answers.set(aKey, { optionIndex, submittedAt: now });
+
     const p = s.participants.get(pid);
+    const round = s.quiz.rounds[roundIndex];
+    const qq    = round?.questions[questionIndex];
+
+    // First correct: check if this is the first correct answer
+    if (s.roundType === 'firstCorrect' && qq && optionIndex === qq.answer && !s.firstCorrectWinner) {
+      s.firstCorrectWinner = { pid, name: p?.name || '', submittedAt: now };
+      // Notify moderator immediately
+      broadcast(code, {
+        type: 'firstCorrectWinner',
+        participantId: pid, participantName: p?.name || '',
+        submittedAt: now, roundIndex, questionIndex,
+      });
+    }
+
     broadcast(code, {
-      type: 'answerReceived',
-      participantId: pid, participantName: p?.name || '',
+      type:             'answerReceived',
+      participantId:    pid,
+      participantName:  p?.name || '',
       roundIndex, questionIndex, optionIndex,
-      answeredCount: countAnswered(s, roundIndex, questionIndex),
+      submittedAt:      now,
+      answeredCount:    countAnswered(s, roundIndex, questionIndex),
       totalParticipants: s.participants.size,
+      roundType:        s.roundType,
     });
-    // Confirm back to participant
+
     ws.send(JSON.stringify({ type: 'answerConfirmed', roundIndex, questionIndex, optionIndex }));
   }
 }
@@ -455,13 +589,25 @@ function buildParticipantState(s, pid) {
   const myAnswer = pid ? s.answers.get(`${s.currentRound}:${s.currentQ}:${pid}`) : null;
   const p = pid ? s.participants.get(pid) : null;
 
+  const isAdmitted     = pid ? s.admitted.has(pid) : false;
+  const isNominated    = s.roundType === 'nominated' && s.nominatedPid === pid;
+  const canAnswer      = s.roundType === 'nominated' ? isNominated : true;
+  const myAnswerData   = myAnswer || null;
+
+  // Build submission times for firstCorrect mode
+  const submissionTimes = s.roundType === 'firstCorrect' && s.answerRevealed
+    ? buildSubmissionTimes(s, s.currentRound, s.currentQ)
+    : null;
+
   return {
     type:              'quizState',
     status:            s.status,
     quizTitle:         s.quizTitle,
     mode:              s.mode,
+    scheduledAt:       s.scheduledAt,
     currentRound:      s.currentRound,
     roundName:         round?.name || '',
+    roundType:         s.roundType,
     currentQ:          s.currentQ,
     totalQuestions:    round?.questions.length || 0,
     question:          s.revealedQuestion ? (qq?.question || '') : null,
@@ -471,10 +617,25 @@ function buildParticipantState(s, pid) {
     correctAnswer:     s.answerRevealed ? (qq?.answer ?? null) : null,
     timerValue:        s.timerValue,
     timerRunning:      s.timerRunning,
-    myAnswer:          myAnswer?.optionIndex ?? null,
+    myAnswer:          myAnswerData?.optionIndex ?? null,
     myScore:           p?.score || 0,
-    leaderboard:       s.answerRevealed ? buildLeaderboard(s).slice(0, 5) : null,
+    isAdmitted,
+    canAnswer,
+    isNominated,
+    nominatedName:     s.roundType === 'nominated'
+                         ? (s.participants.get(s.nominatedPid)?.name || null)
+                         : null,
     projectorView:     s.projectorView,
+    lobbyCountdown:    s.lobbyCountdown,
+    lobbyRunning:      s.lobbyRunning,
+    questionCountdown: s.questionCountdown,
+    // Leaderboard only shown when moderator reveals it
+    leaderboard:       s.leaderboardVisible ? buildLeaderboard(s).slice(0, 5) : null,
+    firstCorrectWinner: s.answerRevealed ? s.firstCorrectWinner : null,
+    submissionTimes,
+    // Watermark from quiz settings
+    watermark:         s.quiz.watermark || null,
+    answerSummary:     s.answerRevealed ? buildAnswerSummary(s) : null,
   };
 }
 
@@ -500,6 +661,24 @@ function buildAnswerSummary(s) {
   }));
 }
 
+function buildSubmissionTimes(s, ri, qi) {
+  // For firstCorrect mode: list all answers with timestamps sorted by time
+  const results = [];
+  const round = s.quiz.rounds[ri];
+  const qq    = round?.questions[qi];
+  for (const [pid, p] of s.participants) {
+    const a = s.answers.get(`${ri}:${qi}:${pid}`);
+    if (!a) continue;
+    results.push({
+      pid, name: p.name,
+      optionIndex:  a.optionIndex,
+      submittedAt:  a.submittedAt,
+      correct:      qq ? a.optionIndex === qq.answer : false,
+    });
+  }
+  return results.sort((a, b) => a.submittedAt - b.submittedAt);
+}
+
 function buildLeaderboard(s) {
   return [...s.participants.values()]
     .map(p => ({ id: p.id, name: p.name, team: p.team, score: p.score }))
@@ -512,6 +691,42 @@ function countAnswered(s, ri, qi) {
     if (s.answers.has(`${ri}:${qi}:${pid}`)) n++;
   }
   return n;
+}
+
+// ─────────────────────────────────────────────
+// COUNTDOWN HELPERS
+// ─────────────────────────────────────────────
+function startLobbyCountdown(code, s) {
+  const tick = setInterval(() => {
+    if (!s.lobbyRunning || s.lobbyCountdown <= 0) {
+      clearInterval(tick);
+      s.lobbyRunning = false;
+      if (s.lobbyCountdown <= 0) {
+        s.status = 'active';
+        broadcast(code, { type: 'lobbyEnded' });
+      }
+      return;
+    }
+    s.lobbyCountdown--;
+    broadcast(code, { type: 'lobbyCountdown', seconds: s.lobbyCountdown, running: true });
+  }, 1000);
+}
+
+function startQuestionCountdown(code, s) {
+  const start = s.questionCountdown;
+  let remaining = start;
+  const tick = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(tick);
+      s.questionCountdownRunning = false;
+      s.questionCountdown = 0;
+      broadcast(code, { type: 'questionCountdownEnd' });
+    } else {
+      s.questionCountdown = remaining;
+      broadcast(code, { type: 'questionCountdown', seconds: remaining });
+    }
+  }, 1000);
 }
 
 // ─────────────────────────────────────────────
