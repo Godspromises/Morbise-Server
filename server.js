@@ -60,7 +60,7 @@ function createSessionState(id, code, quizData, mode) {
     answerRevealed:    false,
     projectorView:     'question',
     // Round type state
-    roundType:         'standard', // standard | firstCorrect | nominated
+    roundType:         'standard', // standard | firstCorrect | nominated | timedStandard | timedStandard
     nominatedPid:      null,       // participant nominated to answer
     firstCorrectWinner:null,       // { pid, name, submittedAt } when first correct found
     // Lobby countdown
@@ -262,15 +262,89 @@ app.get('/api/session/:code/leaderboard', (req, res) => {
 });
 
 // POST /api/session/:code/end
-// Called by desktop when quiz is finished
 app.post('/api/session/:code/end', (req, res) => {
   const code = req.params.code.toUpperCase();
   const s = getSession(code);
   if (!s) return res.status(404).json({ error: 'Not found' });
   s.status = 'finished';
-  // Status stored in-memory only
   broadcast(code, { type: 'sessionEnded', leaderboard: buildLeaderboard(s) });
   console.log(`[SESSION] Ended: ${code}`);
+  res.json({ ok: true });
+});
+
+// POST /api/session/:code/reset
+// Full reset — disconnect all phones, clear all data, keep session alive for rejoin
+app.post('/api/session/:code/reset', (req, res) => {
+  const code = req.params.code.toUpperCase();
+  const s = getSession(code);
+  if (!s) return res.status(404).json({ error: 'Not found' });
+
+  // Notify all phones BEFORE clearing
+  broadcast(code, {
+    type:    'sessionReset',
+    message: 'The quiz has been reset by the organizer.',
+  });
+
+  // Close all participant WebSocket connections
+  const clients = wsClients.get(code);
+  if (clients) {
+    clients.forEach(ws => {
+      if (ws._mqeRole === 'participant') {
+        try { ws.close(1000, 'Session reset'); } catch {}
+      }
+    });
+  }
+
+  // Clear all session data but keep the session alive
+  s.participants.clear();
+  s.admitted.clear();
+  s.answers.clear();
+  s.scoredQuestions.clear();
+  s.currentRound      = 0;
+  s.currentQ          = 0;
+  s.revealedQuestion  = false;
+  s.optionsRevealed   = 0;
+  s.answerRevealed    = false;
+  s.projectorView     = 'question';
+  s.roundType         = 'standard';
+  s.nominatedPid      = null;
+  s.nominatedSelection= null;
+  s.firstCorrectWinner= null;
+  s.leaderboardVisible= false;
+  s.lobbyCountdown    = 0;
+  s.lobbyRunning      = false;
+  s.status            = 'waiting';
+
+  console.log(`[RESET] Session ${code} fully reset`);
+  res.json({ ok: true });
+});
+
+// POST /api/session/:code/invalidate
+// Called when organizer changes the quiz code — old session is killed
+app.post('/api/session/:code/invalidate', (req, res) => {
+  const code = req.params.code.toUpperCase();
+  const s = getSession(code);
+  if (!s) return res.status(404).json({ error: 'Not found' });
+
+  // Tell all connected phones the code is now invalid
+  broadcast(code, {
+    type:    'codeInvalidated',
+    message: 'This session code is no longer valid. Please ask the organizer for the new code.',
+  });
+
+  // Close ALL WebSocket connections for this session
+  const clients = wsClients.get(code);
+  if (clients) {
+    clients.forEach(ws => {
+      try { ws.close(1000, 'Code changed'); } catch {}
+    });
+    clients.clear();
+  }
+
+  // Remove session entirely
+  sessions.delete(code);
+  wsClients.delete(code);
+  console.log(`[INVALIDATE] Session ${code} invalidated`);
   res.json({ ok: true });
 });
 
@@ -347,6 +421,7 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         // Update server-side session state
         const prevRound = s.currentRound;
         const prevQ     = s.currentQ;
+        const prevRevealed = s.revealedQuestion;
         s.currentRound      = state.currentRound      ?? s.currentRound;
         s.currentQ          = state.currentQ           ?? s.currentQ;
         s.timerValue        = state.timer              ?? s.timerValue;
@@ -365,6 +440,11 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
           s.nominatedSelection = null;
           s.firstCorrectWinner = null;
           s.leaderboardVisible = false;
+        }
+
+        // Track when question was first revealed (for timeTaken)
+        if (!prevRevealed && s.revealedQuestion) {
+          s.questionStartedAt = Date.now();
         }
 
         // Broadcast to projector (full state) and participants (their view)
@@ -393,6 +473,7 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         s.nominatedSelection = null;
         s.firstCorrectWinner = null;
         s.leaderboardVisible = false;
+        s.questionStartedAt  = null;
         // Set round type from quiz data
         const r = s.quiz.rounds[roundIndex];
         s.roundType = r?.roundMode || 'standard';
@@ -405,9 +486,55 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
         s.participants.delete(participantId);
         s.admitted.delete(participantId);
         wsClients.get(code)?.forEach(c => {
-          if (c._mqePid === participantId) c.close(1000, 'Removed by moderator');
+          if (c._mqePid === participantId) c.close(1008, 'Removed by moderator');
         });
         broadcast(code, { type: 'participantList', participants: participantList(s) });
+        break;
+      }
+
+      // ── FULL RESET: disconnect all phones, clear all state
+      case 'fullReset': {
+        // Tell all participants they are being disconnected
+        broadcast(code, { type: 'sessionReset', message: 'The quiz has been reset by the organizer.' });
+        // Close all participant WS connections
+        wsClients.get(code)?.forEach(c => {
+          if (c._mqeRole === 'participant') {
+            c.close(1008, 'Quiz reset by organizer');
+          }
+        });
+        // Clear all participants and answers
+        s.participants.clear();
+        s.admitted.clear();
+        s.answers.clear();
+        s.scoredQuestions.clear();
+        // Reset quiz state
+        s.currentRound      = 0;
+        s.currentQ          = 0;
+        s.revealedQuestion  = false;
+        s.optionsRevealed   = 0;
+        s.answerRevealed    = false;
+        s.timerValue        = 0;
+        s.timerRunning      = false;
+        s.nominatedPid      = null;
+        s.nominatedSelection = null;
+        s.firstCorrectWinner = null;
+        s.leaderboardVisible = false;
+        s.projectorView     = 'question';
+        s.status            = 'waiting';
+        // Notify moderator/projector
+        broadcast(code, { type: 'fullResetDone', participants: [] });
+        break;
+      }
+
+      // ── INVALIDATE OLD CODE: when organizer generates new code
+      case 'invalidateSession': {
+        // Mark old session as finished so old-code reconnects are rejected
+        broadcast(code, { type: 'sessionInvalidated',
+          message: 'This session code is no longer valid. Please use the new code.' });
+        wsClients.get(code)?.forEach(c => {
+          if (c._mqeRole === 'participant') c.close(1008, 'Session code changed');
+        });
+        s.status = 'finished';
         break;
       }
 
@@ -525,20 +652,33 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
     // In firstCorrect mode: only allow if no winner yet, and allow changing until timer runs out
     const aKey = `${qKey}:${pid}`;
     const now  = Date.now();
-    s.answers.set(aKey, { optionIndex, submittedAt: now });
+    // For timedStandard: record first submission time, allow changes until timer ends
+    const existing = s.answers.get(aKey);
+    const firstAnsweredAt = existing?.firstAnsweredAt || now;
+    s.answers.set(aKey, { optionIndex, submittedAt: now, firstAnsweredAt });
 
     const p = s.participants.get(pid);
     const round = s.quiz.rounds[roundIndex];
     const qq    = round?.questions[questionIndex];
 
-    // First correct: check if this is the first correct answer
+    // firstCorrect: first correct answer wins immediately
     if (s.roundType === 'firstCorrect' && qq && optionIndex === qq.answer && !s.firstCorrectWinner) {
       s.firstCorrectWinner = { pid, name: p?.name || '', submittedAt: now };
-      // Notify moderator immediately
       broadcast(code, {
         type: 'firstCorrectWinner',
         participantId: pid, participantName: p?.name || '',
         submittedAt: now, roundIndex, questionIndex,
+      });
+    }
+    // timedStandard: record time, winner determined at reveal (fastest correct)
+    if (s.roundType === 'timedStandard' && !s.firstCorrectWinner && qq && optionIndex === qq.answer) {
+      // Track fastest correct in real time for moderator display
+      s.firstCorrectWinner = { pid, name: p?.name || '', submittedAt: now };
+      broadcast(code, {
+        type: 'firstCorrectWinner',
+        participantId: pid, participantName: p?.name || '',
+        submittedAt: now, roundIndex, questionIndex,
+        mode: 'timedStandard', // not locked yet — others can still answer
       });
     }
 
@@ -552,6 +692,18 @@ function handleWsMessage(ws, code, role, pid, msg, s) {
       totalParticipants: s.participants.size,
       roundType:        s.roundType,
     });
+
+    // In nominated mode: immediately broadcast this selection to ALL phones
+    // so everyone sees what the nominated contestant chose
+    if (s.roundType === 'nominated') {
+      s.nominatedSelection = optionIndex;
+      broadcast(code, {
+        type:            'nominatedSelection',
+        participantId:   pid,
+        participantName: p?.name || '',
+        optionIndex,
+      });
+    }
 
     ws.send(JSON.stringify({ type: 'answerConfirmed', roundIndex, questionIndex, optionIndex }));
   }
@@ -572,12 +724,32 @@ function scoreQuestion(s, ri, qi) {
   const correctPts = s.quiz.scores?.correct ?? 10;
   const wrongPts   = s.quiz.scores?.wrong   ?? 0;
 
+  // For timedStandard / firstCorrect: find fastest correct answer
+  let fastestCorrectPid = null;
+  if (s.roundType === 'timedStandard' || s.roundType === 'firstCorrect') {
+    let fastest = Infinity;
+    for (const [pid] of s.participants) {
+      const a = s.answers.get(`${qKey}:${pid}`);
+      if (a && a.optionIndex === qq.answer) {
+        const t = a.firstAnsweredAt || a.submittedAt;
+        if (t < fastest) { fastest = t; fastestCorrectPid = pid; }
+      }
+    }
+  }
+
   for (const [pid, p] of s.participants) {
     const aKey = `${qKey}:${pid}`;
     const a = s.answers.get(aKey);
     if (a === undefined) continue;
     const isCorrect = a.optionIndex === qq.answer;
-    p.score += isCorrect ? correctPts : wrongPts;
+    // timedStandard/firstCorrect: only fastest correct gets full points
+    let pts;
+    if ((s.roundType === 'timedStandard' || s.roundType === 'firstCorrect') && fastestCorrectPid) {
+      pts = (pid === fastestCorrectPid) ? correctPts : wrongPts;
+    } else {
+      pts = isCorrect ? correctPts : wrongPts;
+    }
+    p.score += pts;
 
     
   }
@@ -615,7 +787,7 @@ function buildParticipantState(s, pid) {
   const myAnswerData   = myAnswer || null;
 
   // Build submission times for firstCorrect mode
-  const submissionTimes = s.roundType === 'firstCorrect' && s.answerRevealed
+  const submissionTimes = (s.roundType === 'firstCorrect' || s.roundType === 'timedStandard') && s.answerRevealed
     ? buildSubmissionTimes(s, s.currentRound, s.currentQ)
     : null;
 
@@ -683,20 +855,31 @@ function buildAnswerSummary(s) {
 }
 
 function buildSubmissionTimes(s, ri, qi) {
-  // For firstCorrect mode: list all answers with timestamps sorted by time
   const results = [];
   const round = s.quiz.rounds[ri];
   const qq    = round?.questions[qi];
+  const base  = s.questionStartedAt || null;
   for (const [pid, p] of s.participants) {
     const a = s.answers.get(`${ri}:${qi}:${pid}`);
     if (!a) continue;
+    const ms = base ? (a.submittedAt - base) : null;
     results.push({
-      pid, name: p.name,
-      optionIndex:  a.optionIndex,
-      submittedAt:  a.submittedAt,
-      correct:      qq ? a.optionIndex === qq.answer : false,
+      pid,
+      name:        p.name,
+      optionIndex: a.optionIndex,
+      submittedAt: a.submittedAt,
+      timeTaken:   ms !== null ? ms : null, // ms from question reveal
+      correct:     qq ? a.optionIndex === qq.answer : false,
     });
   }
+  // timedStandard: correct first, then fastest
+  if (s.roundType === 'timedStandard') {
+    return results.sort((a, b) => {
+      if (b.correct !== a.correct) return b.correct ? 1 : -1;
+      return (a.timeTaken ?? Infinity) - (b.timeTaken ?? Infinity);
+    });
+  }
+  // firstCorrect: pure speed order
   return results.sort((a, b) => a.submittedAt - b.submittedAt);
 }
 
